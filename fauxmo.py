@@ -35,8 +35,26 @@ import sys
 import time
 import urllib
 import uuid
+import subprocess
 
+# Fire TV Key codes
+HOME = 3
+PLAY_PAUSE = 85
+NEXT = 87
+PREVIOUS = 88
+PLAY = 126
+PAUSE = 127
+UP = 19
+DOWN = 20
+LEFT = 21
+RIGHT = 22
+ENTER = 66
+BACK = 4
+MENU = 1
 
+# ADB Commands
+START_APP = "adb shell am start -n "
+SEND_KEY = "adb shell input keyevent "
 
 # This XML is the minimum needed to define one of our virtual switches
 # to the Amazon Echo
@@ -63,6 +81,14 @@ def dbg(msg):
         print msg
         sys.stdout.flush()
 
+
+def execute(command):
+    try:
+        # This checks the output instead of the exit code
+        return subprocess.check_output(command.split())
+    except OSError:
+        print "Error:: unknown error executing [", command, "]"
+        return None
 
 # A simple utility class to wait for incoming data to be
 # ready on a socket.
@@ -102,7 +128,7 @@ class poller:
             target = self.targets.get(one_ready[0], None)
             if target:
                 target.do_read(one_ready[0])
- 
+
 
 # Base class for a generic UPnP device. This is far from complete
 # but it supports either specified or automatic IP address and port
@@ -123,7 +149,7 @@ class upnp_device(object):
             del(temp_socket)
             dbg("got local address of %s" % upnp_device.this_host_ip)
         return upnp_device.this_host_ip
-        
+
 
     def __init__(self, listener, poller, port, root_url, server_version, persistent_uuid, other_headers = None, ip_address = None):
         self.listener = listener
@@ -170,7 +196,7 @@ class upnp_device(object):
 
     def get_name(self):
         return "unknown"
-        
+
     def respond_to_search(self, destination, search_target):
         dbg("Responding to search for %s" % self.get_name())
         date_str = email.utils.formatdate(timeval=None, localtime=False, usegmt=True)
@@ -191,7 +217,7 @@ class upnp_device(object):
         message += "\r\n"
         temp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         temp_socket.sendto(message, destination)
- 
+
 
 # This subclass does the bulk of the work to mimic a WeMo switch on the network.
 
@@ -372,6 +398,29 @@ class rest_api_handler(object):
         r = requests.get(self.off_cmd)
         return r.status_code == 200
 
+class adb_api_handler(object):
+    def __init__(self, host, on_cmd, off_cmd):
+        self.host = host
+        self.on_cmd = on_cmd
+        self.off_cmd = off_cmd
+
+    def on(self):
+        self.test()
+        r = execute(self.on_cmd)
+        return True
+
+    def off(self):
+        self.test()
+        r = execute(self.off_cmd)
+        return True
+
+    def test(self):
+        result = execute("adb devices")
+        if self.host not in result:
+            result = execute("adb connect " + self.host)
+            dbg(result)
+
+
 
 # Each entry is a list with the following elements:
 #
@@ -383,14 +432,24 @@ class rest_api_handler(object):
 # 16 switches it can control. Only the first 16 elements of the FAUXMOS
 # list will be used.
 
+ADB_HOST = "localhost:5555"
+if len(sys.argv) > 1:
+    if sys.argv[1] == '-d':
+        DEBUG = True
+    else:
+        ADB_HOST = sys.argv[1]
+
+if len(sys.argv) > 2 and sys.argv[2] == '-d':
+    DEBUG = True
+
+dbg("ADB hostname is " + ADB_HOST)
+
 FAUXMOS = [
-    ['office lights', rest_api_handler('http://192.168.5.4/ha-api?cmd=on&a=office', 'http://192.168.5.4/ha-api?cmd=off&a=office')],
-    ['kitchen lights', rest_api_handler('http://192.168.5.4/ha-api?cmd=on&a=kitchen', 'http://192.168.5.4/ha-api?cmd=off&a=kitchen')],
+    ['Kodi', adb_api_handler(ADB_HOST, START_APP + 'org.xbmc.kodi/.Splash', SEND_KEY + str(HOME))],
+    ['Netflix', adb_api_handler(ADB_HOST, START_APP + 'com.netflix.ninja/.MainActivity', SEND_KEY + str(HOME))]
 ]
 
 
-if len(sys.argv) > 1 and sys.argv[1] == '-d':
-    DEBUG = True
 
 # Set up our singleton for polling the sockets for data ready
 p = poller()
@@ -420,4 +479,3 @@ while True:
     except Exception, e:
         dbg(e)
         break
-
